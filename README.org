@@ -1,0 +1,32 @@
+#+title: drop
+
+Share files at web URLs that expire.  A formalized ~see~ / ~eggs~.
+
+#+begin_example
+drop put talk.pdf                       # <url>/<hash>/talk.pdf, empty index.html, 7d
+drop put pic.jpg --hash file --ttl 2d   # <url>/<hash>.jpg, EXIF stripped
+drop put a b -n bundle --index open     # <url>/<hash>-bundle/ with listing
+drop put notes.pdf --hash none -n bnl --auth --ttl never
+drop ls -l
+drop extend <id> 2w
+drop rm <id-or-url>
+drop gc [-n]
+drop setup systemd|cron [--print]
+#+end_example
+
+A target is a directory served by a web server: local, or ~host:path~
+reached by ssh and rsync.  Configure targets in ~~/.config/drop/config.toml~.
+
+Each drop is described by a sidecar ~.htdrop-<id>.json~ in the top of the
+target directory.  Apache refuses ~.ht*~ files by default so these are not
+served.  ~ls~ and ~gc~ read only the sidecars, so ~gc~ may run on the web
+host itself (target configured with a local path) or from elsewhere over ssh.
+
+Options:
+
+- ~--hash dir|file|none~ :: a hash names a directory holding the files, the file itself, or nothing (~--name~ required)
+- ~--index empty|open~ :: an empty ~index.html~ blocks listing; ~open~ relies on the server allowing listings
+- ~--auth~ :: ~.htaccess~ basic auth using the target's ~htpasswd~ (needs ~AllowOverride AuthConfig~)
+- ~--ttl~ :: 30m, 12h, 7d, 2w or never
+
+Development: ~uv sync~, ~uv run pytest~, ~uv run drop~.
