@@ -7,6 +7,8 @@ drop put talk.pdf                       # <url>/<hash>/talk.pdf, empty index.htm
 drop put pic.jpg --hash file --ttl 2d   # <url>/<hash>.jpg, EXIF stripped
 drop put a b -n bundle --index open     # <url>/<hash>-bundle/ with listing
 drop put notes.pdf --hash none -n bnl --auth --ttl never
+drop put draft.pdf -u alice             # only alice, new users get a generated password
+drop passwd add|rm|ls|prune             # users of the target's htpasswd
 drop ls -l
 drop extend <id> 2w
 drop rm <id-or-url>
@@ -27,6 +29,15 @@ Options:
 - ~--hash dir|file|none~ :: a hash names a directory holding the files, the file itself, or nothing (~--name~ required)
 - ~--index empty|open~ :: an empty ~index.html~ blocks listing; ~open~ relies on the server allowing listings
 - ~--auth~ :: ~.htaccess~ basic auth using the target's ~htpasswd~ (needs ~AllowOverride AuthConfig~)
+- ~--user NAME~ :: implies ~--auth~ with ~Require user NAME~ instead of ~valid-user~
 - ~--ttl~ :: 30m, 12h, 7d, 2w or never
+
+~drop passwd~ edits the target's ~htpasswd~ (over ssh for a remote target;
+passwords are hashed locally by ~htpasswd~ or ~openssl~).  ~ls~ and ~prune~
+scan the ~.htaccess~ files under the target's ~htaccess_root~ (default: the
+drop directory's parent, eg ~~/public_html~) for ~Require user~ lines that
+use this ~htpasswd~.  ~prune~ offers to remove users none of them name.
+Files with ~Require valid-user~ (eg myweb's protected pages) admit any user,
+so ~prune~ notes them and defaults to "no" when there are any.
 
 Development: ~uv sync~, ~uv run pytest~, ~uv run drop~.

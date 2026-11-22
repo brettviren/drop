@@ -10,12 +10,12 @@ from pathlib import Path
 
 import click
 
-from . import __version__, drops, setup as setting
+from . import __version__, drops, passwd, setup as setting
 from .config import Config, ConfigError, load, parse_ttl
 from .store import StoreError
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"], "max_content_width": 96}
-ERRORS = (ConfigError, drops.DropError, StoreError, FileExistsError, OSError)
+ERRORS = (ConfigError, drops.DropError, passwd.PasswdError, StoreError, FileExistsError, OSError)
 
 pass_config = click.make_pass_decorator(Config)
 
@@ -62,23 +62,27 @@ def _copy(text: str) -> bool:
 @click.option("-n", "--name", default="", help="Readable name, appended to a hash dir or used alone with --hash none.")
 @click.option("--index", type=click.Choice(drops.INDEXES), help="empty: an empty index.html blocks listing.  open: allow listing.")
 @click.option("-a", "--auth", is_flag=True, help="Require a password (.htaccess basic auth).")
+@click.option("-u", "--user", "users", multiple=True, help="Admit only this user, may repeat, implies --auth.  A new user gets a generated password.")
 @click.option("-m", "--note", default="", help="Why or for whom, kept with the drop.")
 @click.option("--strip/--no-strip", default=None, help="Strip image metadata (needs mogrify).")
 @click.option("-y", "--copy", "copy", is_flag=True, help="Copy the URL to the clipboard.")
 @pass_config
-def put(cfg: Config, files, target, ttl, hashing, name, index, auth, note, strip, copy):
+def put(cfg: Config, files, target, ttl, hashing, name, index, auth, users, note, strip, copy):
     """Drop FILES (or directories) at a new URL and print it."""
     try:
         entry = drops.put(
             cfg.get(target), list(files), parse_ttl(ttl or cfg.ttl),
             hash=hashing or cfg.hash, name=name, index=index or cfg.index,
             auth=auth, note=note, strip=cfg.strip if strip is None else strip,
+            users=list(users),
         )
     except ERRORS as err:
         fail(err)
     urls = entry.urls if len(entry.urls) == 1 or entry.index != "open" else [entry.url]
     for url in urls:
         click.echo(url)
+    for user, password in entry.passwords.items():
+        click.echo(f"new user {user} password {password}", err=True)
     if copy and not _copy("\n".join(urls)):
         click.echo("no clipboard tool found", err=True)
 
@@ -112,6 +116,7 @@ def ls_(cfg: Config, targets, every, long_):
                 click.echo(f"{flags} {_left(e, now):>7}  {e.created[:10]}  {e.url}")
                 if long_:
                     click.echo(f"      files: {', '.join(e.files)}  owner: {e.owner}"
+                               + (f"\n      users: {', '.join(e.users)}" if e.users else "")
                                + (f"\n      note: {e.note}" if e.note else ""))
     except ERRORS as err:
         fail(err)
@@ -161,6 +166,103 @@ def gc(cfg: Config, targets, dry_run, quiet):
             click.secho(f"drop: {name}: {err}", fg="red", err=True)
             failed = True
     sys.exit(1 if failed else 0)
+
+
+@cli.group("passwd", no_args_is_help=True)
+def passwd_():
+    """Manage users of a target's htpasswd file.
+
+    "drop put --user" names users in a drop's .htaccess, "Require user".
+    A user no .htaccess names, under the target's htaccess_root (default
+    the drop directory's parent), is unreferenced and "prune" offers to
+    remove it.  An .htaccess with "Require valid-user" admits every user
+    so removing any user also shuts them out of it.
+    """
+
+
+@passwd_.command("add", no_args_is_help=True)
+@click.argument("user")
+@click.option("-t", "--target", help="Target name.  Default from config.")
+@click.option("-g", "--generate", is_flag=True, help="Generate and print a password instead of prompting.")
+@pass_config
+def passwd_add(cfg: Config, user, target, generate):
+    """Add USER or set its password."""
+    password = passwd.generate() if generate else click.prompt(
+        f"password for {user}", hide_input=True, confirmation_prompt=True)
+    try:
+        new = passwd.add(cfg.get(target), user, password)
+    except ERRORS as err:
+        fail(err)
+    click.echo(f"{'added' if new else 'updated'} {user}"
+               + (f" password {password}" if generate else ""))
+
+
+@passwd_.command("rm", no_args_is_help=True)
+@click.argument("users", nargs=-1, required=True)
+@click.option("-t", "--target", help="Target name.  Default from config.")
+@pass_config
+def passwd_rm(cfg: Config, users, target):
+    """Remove USERS."""
+    try:
+        gone = passwd.remove(cfg.get(target), list(users))
+    except ERRORS as err:
+        fail(err)
+    for user in users:
+        click.echo(f"removed {user}" if user in gone else f"no user {user}")
+
+
+def _usage(cfg: Config, target: str | None, root: str | None):
+    tgt = cfg.get(target)
+    return tgt, passwd.usage(tgt, root)
+
+
+@passwd_.command("ls")
+@click.option("-t", "--target", help="Target name.  Default from config.")
+@click.option("-r", "--root", help="Directory to scan for .htaccess.  Default from target.")
+@click.option("-l", "--long", "long_", is_flag=True, help="Show the .htaccess files naming each user.")
+@pass_config
+def passwd_ls(cfg: Config, target, root, long_):
+    """List users and how many .htaccess files name them."""
+    try:
+        tgt, use = _usage(cfg, target, root)
+        for user in passwd.users(tgt):
+            where = use.named.get(user, [])
+            click.echo(f"{len(where):>3}  {user}")
+            if long_:
+                for path in where:
+                    click.echo(f"       {path}")
+        if use.anyone:
+            click.echo(f"any user is admitted by {len(use.anyone)} .htaccess with valid-user"
+                       + "".join(f"\n       {p}" for p in use.anyone if long_))
+    except ERRORS as err:
+        fail(err)
+
+
+@passwd_.command("prune")
+@click.option("-t", "--target", help="Target name.  Default from config.")
+@click.option("-r", "--root", help="Directory to scan for .htaccess.  Default from target.")
+@click.option("-n", "--dry-run", is_flag=True, help="Only list unreferenced users.")
+@click.option("-y", "--yes", is_flag=True, help="Remove all unreferenced users without asking.")
+@pass_config
+def passwd_prune(cfg: Config, target, root, dry_run, yes):
+    """Offer to remove users that no .htaccess names."""
+    try:
+        tgt, use = _usage(cfg, target, root)
+        stale = passwd.unreferenced(tgt, use)
+        if not stale:
+            click.echo("no unreferenced users")
+            return
+        if use.anyone:
+            click.echo(f"note: {len(use.anyone)} .htaccess admit any user (valid-user), eg {use.anyone[0]}")
+        if dry_run:
+            for user in stale:
+                click.echo(f"unreferenced {user}")
+            return
+        chosen = [u for u in stale if yes or click.confirm(f"remove unreferenced {u}?", default=not use.anyone)]
+        for user in passwd.remove(tgt, chosen):
+            click.echo(f"removed {user}")
+    except ERRORS as err:
+        fail(err)
 
 
 @cli.command(no_args_is_help=True)

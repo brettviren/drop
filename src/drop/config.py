@@ -35,6 +35,8 @@ class Target:
     url: str
     #: AuthUserFile, as the web server sees it, for --auth drops.
     htpasswd: str = ""
+    #: Where "drop passwd" looks for .htaccess files, default path's parent.
+    htaccess_root: str = ""
 
     @property
     def host(self) -> str:
@@ -96,6 +98,7 @@ def load(path: Path | None = None, env: dict | None = None) -> Config:
                 path=tcfg["path"],
                 url=tcfg["url"].format(user=user).rstrip("/"),
                 htpasswd=tcfg.get("htpasswd", ""),
+                htaccess_root=tcfg.get("htaccess_root", ""),
             )
         except KeyError as err:
             raise ConfigError(f"target {name} lacks {err}") from None

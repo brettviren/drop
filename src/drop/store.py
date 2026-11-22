@@ -54,6 +54,27 @@ class LocalStore:
                 continue
         return out
 
+    def read_file(self, path: str) -> str:
+        """Text of a file named outside the drop directory, '' if missing."""
+        path = Path(path).expanduser()
+        return path.read_text() if path.exists() else ""
+
+    def write_file(self, path: str, text: str) -> None:
+        """Rewrite a file named outside the drop directory.  In place, not
+        by rename, to keep its mode, owner and any symlink or bind mount."""
+        Path(path).expanduser().write_text(text)
+
+    def htaccess(self, root: str) -> dict[str, str]:
+        """Every .htaccess under root, path to text."""
+        root = Path(root).expanduser()
+        out = {}
+        for path in sorted(root.rglob(".htaccess")) if root.is_dir() else []:
+            try:
+                out[str(path)] = path.read_text()
+            except OSError:
+                continue
+        return out
+
     def remove(self, rels: list[str]) -> None:
         for rel in rels:
             path = self.root / rel
@@ -107,6 +128,23 @@ class SshStore:
                 except json.JSONDecodeError:
                     continue
         return entries
+
+    def read_file(self, path: str) -> str:
+        path = shlex.quote(path)
+        return self._sh(f"test -e {path} || exit 0; cat {path}")
+
+    def write_file(self, path: str, text: str) -> None:
+        # cat into the existing file keeps its mode and owner.
+        self._sh(f"cat > {shlex.quote(path)}", text)
+
+    def htaccess(self, root: str) -> dict[str, str]:
+        out = self._sh(
+            f"cd {shlex.quote(root)} 2>/dev/null || exit 0; "
+            "find \"$PWD\" -name .htaccess -type f | sort | "
+            "while read -r f; do printf '\\0%s\\0' \"$f\"; cat \"$f\"; done"
+        )
+        parts = out.split("\0")[1:]
+        return dict(zip(parts[0::2], parts[1::2]))
 
     def remove(self, rels: list[str]) -> None:
         if rels:

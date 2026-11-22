@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from . import passwd
 from .config import Target
 from .store import SIDECAR, open_store
 
@@ -29,7 +30,7 @@ HTACCESS_AUTH = """\
 AuthType Basic
 AuthName "drop {id}"
 AuthUserFile {htpasswd}
-Require valid-user
+Require {require}
 """
 
 
@@ -51,6 +52,10 @@ class Entry:
     auth: bool = False
     owner: str = ""
     urls: list[str] = field(default_factory=list)
+    #: Users "Require user" admits, empty for any valid user.
+    users: list[str] = field(default_factory=list)
+    #: Passwords of users put made for this entry, never saved.
+    passwords: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
     def sidecar(self) -> str:
@@ -64,7 +69,9 @@ class Entry:
         return exp is not None and exp <= (now or datetime.now(timezone.utc))
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), separators=(",", ":"))
+        data = asdict(self)
+        del data["passwords"]
+        return json.dumps(data, separators=(",", ":"))
 
     @classmethod
     def from_dict(cls, data: dict) -> "Entry":
@@ -121,8 +128,13 @@ def put(
     auth: bool = False,
     note: str = "",
     strip: bool = True,
+    users: list[str] | None = None,
     now: datetime | None = None,
 ) -> Entry:
+    """Drop sources at a new URL.  Users imply auth and those missing from
+    the htpasswd are added with generated passwords, given in the entry."""
+    users = [passwd.check_user(u) for u in users or []]
+    auth = auth or bool(users)
     if not sources:
         raise DropError("nothing to drop")
     for src in sources:
@@ -165,6 +177,7 @@ def put(
             index=index,
             auth=auth,
             owner=f"{getpass.getuser()}@{socket.gethostname()}",
+            users=users,
         )
         if kind == "file":
             entry.urls = [entry.url]
@@ -181,10 +194,14 @@ def put(
             # need AllowOverride Options, which is often not granted.
             if auth:
                 (box / ".htaccess").write_text(
-                    HTACCESS_AUTH.format(id=ident, htpasswd=target.htpasswd)
+                    HTACCESS_AUTH.format(
+                        id=ident, htpasswd=target.htpasswd,
+                        require="user " + " ".join(users) if users else "valid-user",
+                    )
                 )
             staged = [box]
         store.ensure()
+        entry.passwords = passwd.ensure(target, users)
         store.upload(staged[0], ident)
         store.write(entry.sidecar, entry.to_json() + "\n")
     return entry
