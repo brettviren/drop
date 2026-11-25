@@ -31,6 +31,31 @@ AuthType Basic
 AuthName "drop {id}"
 AuthUserFile {htpasswd}
 Require {require}
+# Files sections merge after directories, so a FilesMatch granting files
+# higher up (see GRANT) would otherwise override the Require above, and a
+# server's "Satisfy Any" would let a granted host in without a login.
+<FilesMatch "">
+  Require {require}
+  <IfModule mod_access_compat.c>
+    Satisfy All
+  </IfModule>
+</FilesMatch>
+<IfModule mod_access_compat.c>
+  Satisfy All
+</IfModule>
+"""
+
+GRANT_MARK = "# Written by drop: admit files"
+GRANT = GRANT_MARK + """ the server would not, never dotfiles
+# (.htaccess, the .htdrop-*.json sidecars).  Both 2.4 Require and the old
+# Allow, which a mod_access_compat Deny needs.
+<FilesMatch "^[^.]">
+  Require all granted
+  <IfModule mod_access_compat.c>
+    Order deny,allow
+    Allow from all
+  </IfModule>
+</FilesMatch>
 """
 
 
@@ -118,6 +143,18 @@ def _stage(sources: list[Path], tmp: Path, strip: bool) -> list[Path]:
     return staged
 
 
+def grant(store, target: Target) -> bool:
+    """Write the top GRANT .htaccess unless one not made by drop is there.
+    Return True if the drop directory has drop's grant."""
+    path = f"{target.dir}/.htaccess"
+    have = store.read_file(path)
+    if have and not have.startswith(GRANT_MARK):
+        return False
+    if have != GRANT:
+        store.write(".htaccess", GRANT)
+    return True
+
+
 def put(
     target: Target,
     sources: list[Path],
@@ -201,6 +238,8 @@ def put(
                 )
             staged = [box]
         store.ensure()
+        if target.grant:
+            grant(store, target)
         entry.passwords = passwd.ensure(target, users)
         store.upload(staged[0], ident)
         store.write(entry.sidecar, entry.to_json() + "\n")

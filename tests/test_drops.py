@@ -104,3 +104,21 @@ def test_ls_rm_gc_extend(target, files):
     assert drops.entries(target) == []
     with pytest.raises(drops.DropError):
         drops.remove(target, ["nope"])
+
+
+def test_grant(target, files):
+    target.grant = True
+    drops.put(target, [files / "a.txt"], None, now=NOW)
+    top = drops.open_store(target).root / ".htaccess"
+    assert top.read_text() == drops.GRANT
+    assert '<FilesMatch "^[^.]">' in drops.GRANT
+    # An .htaccess drop did not write is left alone.
+    top.write_text("# mine\n")
+    drops.put(target, [files / "b.tar.gz"], None, now=NOW)
+    assert top.read_text() == "# mine\n"
+
+
+def test_auth_htaccess_survives_grants(target, files):
+    drops.put(target, [files / "a.txt"], None, hash="none", name="x", auth=True, now=NOW)
+    text = (drops.open_store(target).root / "x" / ".htaccess").read_text()
+    assert text.count("Require valid-user") == 2 and text.count("Satisfy All") == 2

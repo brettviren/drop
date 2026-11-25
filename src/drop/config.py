@@ -37,6 +37,9 @@ class Target:
     htpasswd: str = ""
     #: Where "drop passwd" looks for .htaccess files, default path's parent.
     htaccess_root: str = ""
+    #: Write a top .htaccess admitting every file but dotfiles, for a
+    #: server that admits only some types (eg only .html) by default.
+    grant: bool = False
 
     @property
     def host(self) -> str:
@@ -99,6 +102,7 @@ def load(path: Path | None = None, env: dict | None = None) -> Config:
                 url=tcfg["url"].format(user=user).rstrip("/"),
                 htpasswd=tcfg.get("htpasswd", ""),
                 htaccess_root=tcfg.get("htaccess_root", ""),
+                grant=bool(tcfg.get("grant", False)),
             )
         except KeyError as err:
             raise ConfigError(f"target {name} lacks {err}") from None
