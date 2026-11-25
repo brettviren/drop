@@ -24,6 +24,12 @@ target directory.  Apache refuses ~.ht*~ files by default so these are not
 served.  ~ls~ and ~gc~ read only the sidecars, so ~gc~ may run on the web
 host itself (target configured with a local path) or from elsewhere over ssh.
 
+A server that admits only some file types (eg only ~.html~) needs ~grant =
+true~ on the target: drop then keeps a top ~.htaccess~ admitting every file
+but dotfiles, unless an ~.htaccess~ drop did not write is already there.
+~--auth~ drops repeat their ~Require~ in a ~FilesMatch~ and set ~Satisfy
+All~, so no grant above them admits without a login.
+
 Options:
 
 - ~--hash dir|file|none~ :: a hash names a directory holding the files, the file itself, or nothing (~--name~ required)
