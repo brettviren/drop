@@ -84,6 +84,16 @@ class LocalStore:
                 path.unlink()
 
 
+def remote_command(script: str) -> str:
+    """Wrap a POSIX sh script so any login shell runs it unchanged.
+
+    sshd hands the command to the user's login shell, which may be fish,
+    csh or another non-POSIX shell.  One single-quoted word reads the same
+    in all of them, so let that shell merely start sh on the script.
+    """
+    return "sh -c " + shlex.quote(script)
+
+
 class SshStore:
     def __init__(self, host: str, root: str) -> None:
         self.host = host
@@ -91,7 +101,7 @@ class SshStore:
 
     def _sh(self, script: str, text: str | None = None) -> str:
         proc = subprocess.run(
-            ["ssh", self.host, script], input=text, capture_output=True, text=True
+            ["ssh", self.host, remote_command(script)], input=text, capture_output=True, text=True
         )
         if proc.returncode:
             raise StoreError(f"ssh {self.host}: {proc.stderr.strip()}")
